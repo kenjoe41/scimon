@@ -41,7 +41,7 @@ func main() {
 	homeDir, _ := os.UserHomeDir()
 	scimonDir := filepath.Join(homeDir, hiddenDir)
 	if err := os.MkdirAll(scimonDir, 0755); err != nil {
-		fmt.Printf("Error creating hidden directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error creating hidden directory: %v\n", err)
 		return
 	}
 
@@ -56,12 +56,12 @@ func main() {
 		if !isAvailable {
 			// Append DOI to the file if it's available
 			if err := addDOIToFile(doiFilePath, doi); err != nil {
-				fmt.Printf("Error adding DOI to file: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error adding DOI to file: %v\n", err)
 			} else {
-				fmt.Println("DOI added to monitored file.")
+				fmt.Fprintf(os.Stderr, "DOI added to monitored file.\n")
 			}
 		} else {
-			fmt.Println("DOI not available; not added to monitored file.")
+			fmt.Fprintf(os.Stderr, "DOI not available; not added to monitored file.\n")
 		}
 		return
 	}
@@ -74,7 +74,7 @@ func processDOIFile(doiFilePath string) {
 	// Open or create the DOI file
 	doiFile, err := os.OpenFile(doiFilePath, os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
-		fmt.Printf("Error opening DOI file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error opening DOI file: %v\n", err)
 		return
 	}
 	defer doiFile.Close()
@@ -118,7 +118,7 @@ func printStatus(doi string, available bool) {
 	if available {
 		fmt.Printf("[%s+%s] DOI: %s is available\n", colorGreen, colorReset, doi)
 	} else {
-		fmt.Printf("[%s-%s] DOI: %s is not available\n", colorRed, colorReset, doi)
+		fmt.Fprintf(os.Stderr, "[%s-%s] DOI: %s is not available\n", colorRed, colorReset, doi)
 	}
 }
 
