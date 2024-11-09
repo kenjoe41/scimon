@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 const (
 	hiddenDir   = ".scimon"
 	doiFileName = "doi_urls.txt"
+	configFile  = "config.json"
 )
 
 // ANSI color codes
@@ -22,6 +24,10 @@ const (
 	colorRed   = "\033[31m"
 	colorReset = "\033[0m"
 )
+
+type Config struct {
+	DiscordWebhook string `json:"discord_webhook"`
+}
 
 func main() {
 	// Parse command-line arguments
@@ -35,6 +41,7 @@ func main() {
 		isAvailable := checkDOI(doi)
 		printStatus(doi, isAvailable)
 		return
+
 	}
 
 	// Setup hidden directory and files
@@ -44,6 +51,45 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error creating hidden directory: %v\n", err)
 		return
 	}
+
+	// Load config
+	config, err := loadConfig()
+	if err != nil {
+		// Check if the error indicates the file does not exist by comparing the error message
+		if strings.Contains(err.Error(), "no such file or directory") {
+			fmt.Fprintf(os.Stderr, "Warning: Config file not found. An example config file has been created at %s. Please populate it with the necessary arguments.\n", filepath.Join(scimonDir, configFile))
+
+			// Create an example config file at the recommended path
+			exampleConfig := `{
+	"discord_webhook": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL"
+}`
+
+			err = os.WriteFile(filepath.Join(scimonDir, configFile), []byte(exampleConfig), 0644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating example config file: %v\n", err)
+				return
+			}
+
+			// Try loading the config again after creating the example
+			config, err = loadConfig()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading config after creation: %v\n", err)
+				return
+			}
+
+			// Ensure the loaded config is not nil (optional, depends on your loadConfig implementation)
+			if config == nil {
+				fmt.Fprintf(os.Stderr, "Error: Config is nil after loading.\n")
+				return
+			}
+
+		} else {
+			fmt.Fprintf(os.Stderr, "Error loading configs: %v\n", err)
+			return
+		}
+	}
+
+	// Continue with the rest of your program...
 
 	// File path for monitored DOIs
 	doiFilePath := filepath.Join(scimonDir, doiFileName)
@@ -63,14 +109,15 @@ func main() {
 		} else {
 			fmt.Fprintf(os.Stderr, "DOI not available; not added to monitored file.\n")
 		}
+
 		return
 	}
 
 	// If no flags are provided, process all DOIs in the file
-	processDOIFile(doiFilePath)
+	processDOIFile(doiFilePath, config.DiscordWebhook)
 }
 
-func processDOIFile(doiFilePath string) {
+func processDOIFile(doiFilePath, discordWebhook string) {
 	// Open or create the DOI file
 	doiFile, err := os.OpenFile(doiFilePath, os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
@@ -88,6 +135,9 @@ func processDOIFile(doiFilePath string) {
 		}
 		isAvailable := checkDOI(doi)
 		printStatus(doi, isAvailable)
+
+		// Send Discord notification
+		sendDiscordNotification(discordWebhook, doi, isAvailable)
 	}
 }
 
@@ -131,4 +181,57 @@ func addDOIToFile(doiFilePath, doi string) error {
 
 	_, err = doiFile.WriteString(doi + "\n")
 	return err
+}
+
+func loadConfig() (*Config, error) {
+	// Load the configuration file
+	userHomeDir, _ := os.UserHomeDir()
+	configFilePath := filepath.Join(userHomeDir, hiddenDir, configFile)
+	file, err := os.Open(configFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("could not open config file: %v", err)
+	}
+	defer file.Close()
+
+	var config Config
+	decoder := json.NewDecoder(file)
+	err = decoder.Decode(&config)
+	if err != nil {
+		return nil, fmt.Errorf("could not decode config file: %v", err)
+	}
+
+	return &config, nil
+}
+
+func sendDiscordNotification(webhookURL, doi string, available bool) {
+	// Prepare the message
+	status := "not available"
+	if available {
+		status = "available"
+	}
+
+	message := fmt.Sprintf("DOI: %s is %s", doi, status)
+
+	// Create the JSON payload
+	payload := map[string]interface{}{
+		"content": message,
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating Discord message payload: %v\n", err)
+		return
+	}
+
+	// Send the request to the Discord webhook
+	resp, err := http.Post(webhookURL, "application/json", strings.NewReader(string(payloadBytes)))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error sending Discord notification: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != 204 {
+		fmt.Fprintf(os.Stderr, "Error sending Discord notification, status code: %d\n", resp.StatusCode)
+	}
 }
