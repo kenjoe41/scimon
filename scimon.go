@@ -245,12 +245,27 @@ func printStatus(doi string, available bool, pdfLink string) {
 }
 
 func addDOIToFile(doiFilePath, doi string) error {
-	doiFile, err := os.OpenFile(doiFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Open the DOI file for reading and writing
+	doiFile, err := os.OpenFile(doiFilePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
 	defer doiFile.Close()
 
+	// Read existing DOIs into a map to ensure uniqueness
+	doiSet := make(map[string]struct{})
+	scanner := bufio.NewScanner(doiFile)
+	for scanner.Scan() {
+		doiSet[scanner.Text()] = struct{}{} // Empty struct{} is used to save memory
+	}
+
+	// Check if the DOI is already in the set
+	if _, exists := doiSet[doi]; exists {
+		// DOI already exists, no need to add it again
+		return nil
+	}
+
+	// If the DOI doesn't exist, append it to the file
 	_, err = doiFile.WriteString(doi + "\n")
 	return err
 }
