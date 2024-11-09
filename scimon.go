@@ -120,25 +120,58 @@ func main() {
 
 func processDOIFile(doiFilePath, discordWebhook string) {
 	// Open or create the DOI file
-	doiFile, err := os.OpenFile(doiFilePath, os.O_RDONLY|os.O_CREATE, 0644)
+	doiFile, err := os.OpenFile(doiFilePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening DOI file: %v\n", err)
 		return
 	}
 	defer doiFile.Close()
 
-	// Process each DOI and check availability on Sci-Hub
+	// Read all DOIs from the file
+	var doIs []string
 	scanner := bufio.NewScanner(doiFile)
 	for scanner.Scan() {
 		doi := scanner.Text()
-		if doi == "" {
-			continue
+		if doi != "" {
+			doIs = append(doIs, doi)
 		}
+	}
+
+	// Check DOI availability and remove available DOIs
+	var updatedDOIs []string
+	for _, doi := range doIs {
 		isAvailable, pdfLink := checkDOI(doi)
 		printStatus(doi, isAvailable, pdfLink)
 
 		// Send Discord notification
 		sendDiscordNotification(discordWebhook, doi, isAvailable, pdfLink)
+
+		// If the DOI is not available, keep it in the list for later
+		if !isAvailable {
+			updatedDOIs = append(updatedDOIs, doi)
+		}
+	}
+
+	// Overwrite the DOI file with the updated list (without available DOIs)
+	err = doiFile.Truncate(0) // Clear the file
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error clearing DOI file: %v\n", err)
+		return
+	}
+
+	_, err = doiFile.Seek(0, 0) // Rewind to the beginning of the file
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error seeking to the beginning of the DOI file: %v\n", err)
+		return
+	}
+
+	// Write the updated DOIs back into the file
+	for _, doi := range updatedDOIs {
+		_, err := doiFile.WriteString(doi + "\n")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing DOI to file: %v\n", err)
+			return
+		}
 	}
 }
 
