@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 const (
@@ -38,8 +41,8 @@ func main() {
 	// Handle the `-check` flag
 	if *checkFlag != "" {
 		doi := *checkFlag
-		isAvailable := checkDOI(doi)
-		printStatus(doi, isAvailable)
+		isAvailable, pdfLink := checkDOI(doi)
+		printStatus(doi, isAvailable, pdfLink)
 		return
 
 	}
@@ -97,8 +100,8 @@ func main() {
 	// Handle the `-add` flag
 	if *addFlag != "" {
 		doi := *addFlag
-		isAvailable := checkDOI(doi)
-		printStatus(doi, isAvailable)
+		isAvailable, pdfLink := checkDOI(doi)
+		printStatus(doi, isAvailable, pdfLink)
 		if !isAvailable {
 			// Append DOI to the file if it's available
 			if err := addDOIToFile(doiFilePath, doi); err != nil {
@@ -106,8 +109,6 @@ func main() {
 			} else {
 				fmt.Fprintf(os.Stderr, "DOI added to monitored file.\n")
 			}
-		} else {
-			fmt.Fprintf(os.Stderr, "DOI not available; not added to monitored file.\n")
 		}
 
 		return
@@ -133,42 +134,80 @@ func processDOIFile(doiFilePath, discordWebhook string) {
 		if doi == "" {
 			continue
 		}
-		isAvailable := checkDOI(doi)
-		printStatus(doi, isAvailable)
+		isAvailable, pdfLink := checkDOI(doi)
+		printStatus(doi, isAvailable, pdfLink)
 
 		// Send Discord notification
-		sendDiscordNotification(discordWebhook, doi, isAvailable)
+		sendDiscordNotification(discordWebhook, doi, isAvailable, pdfLink)
 	}
 }
 
-func checkDOI(doi string) bool {
+func checkDOI(doi string) (bool, string) {
 	// Construct Sci-Hub URL
 	sciHubURL := fmt.Sprintf("https://sci-hub.se/%s", doi)
 	resp, err := http.Get(sciHubURL)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		return false
+		return false, ""
 	}
 	defer resp.Body.Close()
 
 	// Read the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false
+		return false, ""
 	}
 
 	// Check for the indicator text in the HTML
 	if strings.Contains(string(body), `Unfortunately, Sci-Hub doesn't have the requested document`) {
-		return false
+		return false, ""
 	}
 
-	return true
+	pdfURL, _ := extractPDFLink(string(body))
+
+	return true, pdfURL
 }
 
-func printStatus(doi string, available bool) {
+func extractPDFLink(body string) (string, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+
+	pdfLink, found := doc.Find("embed[src]").Attr("src")
+	if !found {
+		return "", nil // No PDF link found, but not an error
+	}
+
+	// Split the link at the "#" symbol and return the first part
+	parts := strings.SplitN(pdfLink, "#", 2)
+	pdfLink = parts[0]
+
+	// Parse the URL
+	u, err := url.Parse(pdfLink)
+	if err != nil {
+		return "", err
+	}
+
+	// Ensure the scheme is https
+	u.Scheme = "https"
+
+	return u.String(), nil
+}
+
+func printStatus(doi string, available bool, pdfLink string) {
 	if available {
-		fmt.Printf("[%s+%s] DOI: %s is available\n", colorGreen, colorReset, doi)
+		message := fmt.Sprintf("[%s+%s] DOI: %s is available on SciHub.", colorGreen, colorReset, doi)
+
+		// Append the PDF link if it's available
+		if pdfLink != "" {
+			message = fmt.Sprintf("%s Get it at %s", message, pdfLink)
+		}
+
+		// Print the message to standard output (console)
+		fmt.Println(message)
 	} else {
-		fmt.Fprintf(os.Stderr, "[%s-%s] DOI: %s is not available\n", colorRed, colorReset, doi)
+		// Print the error message to standard error (console)
+		fmt.Fprintf(os.Stderr, "[%s-%s] DOI: %s is not available on SciHub yet.\n", colorRed, colorReset, doi)
 	}
 }
 
@@ -203,16 +242,22 @@ func loadConfig() (*Config, error) {
 	return &config, nil
 }
 
-func sendDiscordNotification(webhookURL, doi string, available bool) {
+func sendDiscordNotification(webhookURL, doi string, available bool, pdfLink string) {
 	// Prepare the message
 	status := "not available"
 	if available {
 		status = "available"
 	}
 
-	message := fmt.Sprintf("DOI: %s is %s", doi, status)
+	// Start the message with DOI status
+	message := fmt.Sprintf("DOI: %s is %s on SciHub.", doi, status)
 
-	// Create the JSON payload
+	// If a PDF link is available, append it to the message
+	if pdfLink != "" {
+		message = fmt.Sprintf("%s\nPDF Link: %s", message, pdfLink)
+	}
+
+	// Create the JSON payload for Discord
 	payload := map[string]interface{}{
 		"content": message,
 	}
