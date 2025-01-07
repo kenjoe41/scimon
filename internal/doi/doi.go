@@ -58,22 +58,20 @@ func extractPDFLink(body string) (string, error) {
 		return "", nil // No PDF link found, but not an error
 	}
 
-	//Don't remember why i did this.
-	// parts := strings.SplitN(pdfLink, "#", 2)
-	// pdfLink = parts[0]
+	parts := strings.SplitN(pdfLink, "#", 2)
+	pdfLink = parts[0]
 
-	// u, err := url.Parse(pdfLink)
-	// if err != nil {
-	// 	return "", err
-	// }
+	u, err := url.Parse(pdfLink)
+	if err != nil {
+		return "", err
+	}
 
-	// u.Scheme = "https"
-	// if u.Host == "" || !strings.Contains(u.Host, "sci-hub.se") {
-	// 	u.Host = "sci-hub.se"
-	// }
+	u.Scheme = "https"
+	if u.Host == "" || !strings.Contains(u.Host, "sci-hub.se") {
+		u.Host = "sci-hub.se"
+	}
 
-	// return u.String(), nil
-	return pdfLink, nil
+	return u.String(), nil
 }
 
 func isValidPDFLink(client *retryablehttp.Client, link string) bool {
